@@ -3,8 +3,9 @@ import http from "http";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import superagent from "superagent";
 
-// ================ Ініціалізація ================
+
 const program = new Command();
 
 program
@@ -15,14 +16,12 @@ program
 
 const options = program.opts();
 
-// __dirname для ES-модулів
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Абсолютний шлях до кеш-директорії
 const cacheDir = path.resolve(__dirname, options.cache);
 
-// Перевірка існування директорії кешу
+
 try {
   await fs.mkdir(cacheDir, { recursive: true });
   console.log(`Директорія кешу: ${cacheDir}`);
@@ -31,11 +30,11 @@ try {
   process.exit(1);
 }
 
-// ================ Створення HTTP-сервера ================
+
 const server = http.createServer(async (req, res) => {
   const method = req.method;
-  const urlPath = req.url; // наприклад, /200
-  const code = urlPath.slice(1); // '200'
+  const urlPath = req.url;
+  const code = urlPath.slice(1);
 
   if (!code) {
     res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
@@ -46,14 +45,31 @@ const server = http.createServer(async (req, res) => {
   const filePath = path.join(cacheDir, `${code}.jpg`);
 
   try {
-    // ==================== GET ====================
+
     if (method === "GET") {
-      const data = await fs.readFile(filePath);
-      res.writeHead(200, { "Content-Type": "image/jpeg" });
-      res.end(data);
+      try {
+        // якщо картинка є в кеші
+        const data = await fs.readFile(filePath);
+        res.writeHead(200, { "Content-Type": "image/jpeg" });
+        res.end(data);
+      } catch (err) {
+
+        try {
+          const response = await superagent.get(`https://http.cat/${code}`);
+          const buffer = response.body;
+
+          // зберігаємо у кеш
+          await fs.writeFile(filePath, buffer);
+          res.writeHead(200, { "Content-Type": "image/jpeg" });
+          res.end(buffer);
+        } catch (fetchErr) {
+
+          res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end(`Картинку з кодом ${code} не знайдено ні в кеші, ні на http.cat.`);
+        }
+      }
     }
 
-    // ==================== PUT ====================
     else if (method === "PUT") {
       let body = [];
       for await (const chunk of req) body.push(chunk);
@@ -64,14 +80,12 @@ const server = http.createServer(async (req, res) => {
       res.end(`Картинку з кодом ${code} збережено у кеш.`);
     }
 
-    // ==================== DELETE ====================
     else if (method === "DELETE") {
       await fs.unlink(filePath);
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
       res.end(`Картинку ${code}.jpg видалено.`);
     }
 
-    // ==================== Інші методи ====================
     else {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
@@ -87,7 +101,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// ================ Запуск ================
 server.listen(options.port, options.host, () => {
   console.log(`Сервер запущено на http://${options.host}:${options.port}`);
 });
